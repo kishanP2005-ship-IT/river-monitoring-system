@@ -1,11 +1,12 @@
 #include <SoftwareSerial.h>
 #include <Servo.h>
+#include <TinyGPS++.h>
 
-//PIN CONFIGURATION
+//PIN CONFIGURATION 
 
 // Water Level Ultrasonic Sensor
-const int TRIG_PIN = 13;
-const int ECHO_PIN = 12;
+const int TRIG_PIN  = 13;
+const int ECHO_PIN  = 12;
 
 // Vandal Detection Ultrasonic Sensor
 const int TRIG2_PIN = 3;
@@ -18,18 +19,21 @@ const int SERVO_PIN  = 6;
 // SIM800L GSM
 SoftwareSerial sim800(7, 8);   // RX, TX
 
+// GPS uses Hardware Serial (Pins 0 & 1)
+TinyGPSPlus gps;
+
 Servo myServo;
 
-//VARIABLES
+// VARIABLES
 unsigned long lastServoMove = 0;
 int servoAngle = 0;
 int servoDirection = 1;
 const int SERVO_DELAY = 15;
 
 unsigned long lastVandalAlert = 0;
-const unsigned long VANDAL_COOLDOWN = 10000; // 10 seconds
+const unsigned long VANDAL_COOLDOWN = 10000;
 
-//SETUP
+//SETUP 
 void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
@@ -40,7 +44,7 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
 
-  Serial.begin(9600);
+  Serial.begin(9600);   // GPS on hardware serial
   sim800.begin(9600);
 
   myServo.attach(SERVO_PIN);
@@ -49,9 +53,10 @@ void setup() {
   sendSMS("System Initialized.\nRiver water level monitoring started.");
 }
 
-//LOOP
+//LOOP 
 void loop() {
   servoSweep();
+  readGPSData();
   checkWaterLevel();
   checkVandalDetection();
 }
@@ -69,27 +74,30 @@ void servoSweep() {
   }
 }
 
-//WATER LEVEL 
+//WATER LEVEL
 void checkWaterLevel() {
   int level = readDistance(TRIG_PIN, ECHO_PIN);
 
-  if (level > 0) {
-    Serial.print("Water Level: ");
-    Serial.print(level);
-    Serial.println(" cm");
+  if (level > 0 && level < 50) {
+    String msg = "⚠️ Water Level Alert!\nLevel: ";
+    msg += level;
+    msg += " cm\n";
 
-    if (level < 50) {
-      String msg = "⚠️ Water Level Alert!\nLevel: ";
-      msg += level;
-      msg += " cm";
-
-      sendSMS(msg);
-      delay(10000); // Avoid SMS flooding
+    if (gps.location.isValid()) {
+      msg += "Lat: ";
+      msg += String(gps.location.lat(), 6);
+      msg += "\nLng: ";
+      msg += String(gps.location.lng(), 6);
+    } else {
+      msg += "GPS: Not Fixed";
     }
+
+    sendSMS(msg);
+    delay(10000);
   }
 }
 
-//VANDAL DETECTION 
+//VANDAL DETECTION
 void checkVandalDetection() {
   int distance = readDistance(TRIG2_PIN, ECHO2_PIN);
 
@@ -107,7 +115,7 @@ void checkVandalDetection() {
   }
 }
 
-//ULTRASONIC FUNCTION
+//ULTRASONIC 
 int readDistance(int trigPin, int echoPin) {
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
@@ -121,7 +129,14 @@ int readDistance(int trigPin, int echoPin) {
   return duration / 58;
 }
 
-//SEND SMS 
+//GPS READ 
+void readGPSData() {
+  while (Serial.available()) {
+    gps.encode(Serial.read());
+  }
+}
+
+//SEND SMS
 void sendSMS(String message) {
   sim800.println("AT+CMGF=1");
   delay(500);
@@ -131,8 +146,4 @@ void sendSMS(String message) {
   delay(500);
   sim800.write(26); // CTRL+Z
   delay(5000);
-
-  Serial.println("SMS Sent:");
-  Serial.println(message);
 }
-

@@ -1,1 +1,138 @@
+#include <SoftwareSerial.h>
+#include <Servo.h>
+
+//PIN CONFIGURATION
+
+// Water Level Ultrasonic Sensor
+const int TRIG_PIN = 13;
+const int ECHO_PIN = 12;
+
+// Vandal Detection Ultrasonic Sensor
+const int TRIG2_PIN = 3;
+const int ECHO2_PIN = 4;
+
+// Buzzer & Servo
+const int BUZZER_PIN = 2;
+const int SERVO_PIN  = 6;
+
+// SIM800L GSM
+SoftwareSerial sim800(7, 8);   // RX, TX
+
+Servo myServo;
+
+//VARIABLES
+unsigned long lastServoMove = 0;
+int servoAngle = 0;
+int servoDirection = 1;
+const int SERVO_DELAY = 15;
+
+unsigned long lastVandalAlert = 0;
+const unsigned long VANDAL_COOLDOWN = 10000; // 10 seconds
+
+//SETUP
+void setup() {
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  pinMode(TRIG2_PIN, OUTPUT);
+  pinMode(ECHO2_PIN, INPUT);
+
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  Serial.begin(9600);
+  sim800.begin(9600);
+
+  myServo.attach(SERVO_PIN);
+  delay(1000);
+
+  sendSMS("System Initialized.\nRiver water level monitoring started.");
+}
+
+//LOOP
+void loop() {
+  servoSweep();
+  checkWaterLevel();
+  checkVandalDetection();
+}
+
+//SERVO SWEEP 
+void servoSweep() {
+  if (millis() - lastServoMove >= SERVO_DELAY) {
+    lastServoMove = millis();
+    servoAngle += servoDirection;
+
+    if (servoAngle >= 180 || servoAngle <= 0) {
+      servoDirection = -servoDirection;
+    }
+    myServo.write(servoAngle);
+  }
+}
+
+//WATER LEVEL 
+void checkWaterLevel() {
+  int level = readDistance(TRIG_PIN, ECHO_PIN);
+
+  if (level > 0) {
+    Serial.print("Water Level: ");
+    Serial.print(level);
+    Serial.println(" cm");
+
+    if (level < 50) {
+      String msg = "⚠️ Water Level Alert!\nLevel: ";
+      msg += level;
+      msg += " cm";
+
+      sendSMS(msg);
+      delay(10000); // Avoid SMS flooding
+    }
+  }
+}
+
+//VANDAL DETECTION 
+void checkVandalDetection() {
+  int distance = readDistance(TRIG2_PIN, ECHO2_PIN);
+
+  if (distance > 0 && distance < 30) {
+    if (millis() - lastVandalAlert > VANDAL_COOLDOWN) {
+      lastVandalAlert = millis();
+
+      for (int i = 0; i < 5; i++) {
+        digitalWrite(BUZZER_PIN, HIGH);
+        delay(300);
+        digitalWrite(BUZZER_PIN, LOW);
+        delay(300);
+      }
+    }
+  }
+}
+
+//ULTRASONIC FUNCTION
+int readDistance(int trigPin, int echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  long duration = pulseIn(echoPin, HIGH, 30000);
+  if (duration == 0) return -1;
+
+  return duration / 58;
+}
+
+//SEND SMS 
+void sendSMS(String message) {
+  sim800.println("AT+CMGF=1");
+  delay(500);
+  sim800.println("AT+CMGS=\"+919453338826\"");
+  delay(500);
+  sim800.print(message);
+  delay(500);
+  sim800.write(26); // CTRL+Z
+  delay(5000);
+
+  Serial.println("SMS Sent:");
+  Serial.println(message);
+}
 
